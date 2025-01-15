@@ -366,7 +366,7 @@ export default class extends Module {
 		}
 
 		const friend: Friend | null = this.ai.lookupFriend(choseNote.userId);
-		if (friend == null || friend.love < 7 || choseNote.user.isBot) return false;
+		//if (friend == null || friend.love < 7 || choseNote.user.isBot) return false;
 
 		const relation = await this.ai.api('users/relation', {
 			userId: choseNote.userId,
