@@ -5,7 +5,7 @@ import Message from '@/message.js';
 import config from '@/config.js';
 import Friend from '@/friend.js';
 import urlToBase64 from '@/utils/url2base64.js';
-import got, { HTTPError } from 'got';
+import got from 'got';
 import loki from 'lokijs';
 
 type AiChat = {
@@ -55,12 +55,14 @@ type AiChatHist = {
 };
 
 const TYPE_GEMINI = 'gemini';
-const GEMINI_20_FLASH_API =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
+const geminiModel = config.geminiModel || 'gemini-2.0-flash-exp';
+const GEMINI_API = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
 const RANDOMTALK_DEFAULT_PROBABILITY = 0.02; // デフォルトのrandomTalk確率
 const TIMEOUT_TIME = 1000 * 60 * 60 * 0.5; // aichatの返信を監視する時間
 const RANDOMTALK_DEFAULT_INTERVAL = 1000 * 60 * 60 * 12; // デフォルトのrandomTalk間隔
+
+const AUTO_NOTE_DEFAULT_INTERVAL = 1000 * 60 * 360;
 
 export default class extends Module {
   public readonly name = 'aichat';
@@ -100,6 +102,20 @@ export default class extends Module {
       setInterval(this.aichatRandomTalk, this.randomTalkIntervalMinutes);
     }
 
+		// ここで geminiPostMode が "auto" もしくは "both" の場合、自動ノート投稿を設定
+		if (
+			config.geminiPostMode === 'auto' ||
+			config.geminiPostMode === 'both'
+		) {
+			const interval =
+				config.autoNoteIntervalMinutes &&
+				!isNaN(parseInt(config.autoNoteIntervalMinutes))
+					? 1000 * 60 * parseInt(config.autoNoteIntervalMinutes)
+					: AUTO_NOTE_DEFAULT_INTERVAL;
+			setInterval(this.autoNote, interval);
+			this.log('Gemini自動ノート投稿を有効化: interval=' + interval);
+		}
+
     return {
       mentionHook: this.mentionHook,
       contextHook: this.contextHook,
@@ -108,11 +124,7 @@ export default class extends Module {
   }
 
   @bindThis
-  private async genTextByGemini(aiChat: AiChat, files: base64File[]) : Promise<{
-		text: string | null;
-		error?: Error;
-		statusCode?: number;
-	}> {
+  private async genTextByGemini(aiChat: AiChat, files: base64File[]) {
     this.log('Generate Text By Gemini...');
     let parts: GeminiParts = [];
     const now = new Date().toLocaleString('ja-JP', {
@@ -196,21 +208,11 @@ export default class extends Module {
       }
     } catch (err: unknown) {
       this.log('Error By Call Gemini');
-			let statusCode: number | undefined;
-
-      if (err instanceof HTTPError) {
-				statusCode = err.response.statusCode;
-				this.log(`HTTP Error: ${statusCode}`);
-			} else if (err instanceof Error) {
-				this.log(`${err.name}\n${err.message}\n${err.stack}`);
-			}
-
-			return {
-				text: null,
-				error: err instanceof Error ? err : new Error(String(err)),
-				statusCode
-			};
-		}
+      if (err instanceof Error) {
+        this.log(`${err.name}\n${err.message}\n${err.stack}`);
+      }
+    }
+    return null;
   }
 
   @bindThis
@@ -315,6 +317,13 @@ export default class extends Module {
     this.log('contextHook...');
     if (msg.text == null) return false;
 
+			const relation = await this.ai.api('users/relation', { userId: msg.userId });
+			if (relation[0]?.isFollowing !== true) {
+				this.log('The user is not following me: ' + msg.userId);
+				msg.reply('あなたはaichatを実行する権限がありません。');
+				return false;
+			}
+
     const conversationData = await this.ai.api('notes/conversation', {
       noteId: msg.id,
     });
@@ -418,6 +427,29 @@ export default class extends Module {
     return false;
   }
 
+	@bindThis
+  private async autoNote() {
+    this.log('Gemini自動ノート投稿開始');
+    if (!config.geminiApiKey || !config.autoNotePrompt) {
+      this.log('APIキーまたは自動ノート用プロンプトが設定されていません。');
+      return;
+    }
+    // 自動投稿の場合は質問部分は任意の固定文や空文字でもOKです。
+    const aiChat: AiChat = {
+      question: '',
+      prompt: config.autoNotePrompt,
+      api: GEMINI_API,
+      key: config.geminiApiKey,
+    };
+    const base64Files: base64File[] = []; // 自動ノートの場合はファイルは添付しない
+    const text = await this.genTextByGemini(aiChat, base64Files);
+    if (text) {
+      this.ai.post({ text });
+    } else {
+      this.log('Gemini自動ノートの生成に失敗しました。');
+    }
+  }
+
   @bindThis
   private async handleAiChat(exist: AiChatHist, msg: Message) {
     let text: string, aiChat: AiChat;
@@ -451,22 +483,22 @@ export default class extends Module {
     aiChat = {
       question: question,
       prompt: prompt,
-      api: GEMINI_20_FLASH_API,
+      api: GEMINI_API,
       key: config.geminiApiKey,
       history: exist.history,
       friendName: friendName,
     };
 
     const base64Files: base64File[] = await this.note2base64File(msg.id);
-		const result = await this.genTextByGemini(aiChat, base64Files);
+    text = await this.genTextByGemini(aiChat, base64Files);
 
-		if (result.text === null) {
-      this.log('API call failed: ' + result.error);
-			msg.reply(serifs.aichat.error(exist.type, result.statusCode));
-			return false;
-		}
-
-		text = result.text;
+    if (text == null) {
+      this.log(
+        'The result is invalid. It seems that tokens and other items need to be reviewed.'
+      );
+      msg.reply(serifs.aichat.error(exist.type));
+      return false;
+    }
 
     msg.reply(serifs.aichat.post(text)).then((reply) => {
       if (!exist.history) {

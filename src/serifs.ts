@@ -427,10 +427,8 @@ export default {
 
   aichat: {
     nothing: (type) => `あぅ... ${type}のAPIキーが登録されてないみたいです`,
-		error: (type, statusCode?: number) =>
-			`うぇ...${type}でエラーが発生しちゃったみたいです${
-				statusCode ? ` (ステータスコード: ${statusCode})` : ''
-			}。`,
+    error: (type) =>
+      `うぇ...${type}でエラーが発生しちゃったみたいです。gemini-flashだと動くかも？`,
     post: (text) => `${text} #aichat`,
   },
 
