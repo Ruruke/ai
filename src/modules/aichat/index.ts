@@ -15,6 +15,7 @@ type AiChat = {
   key: string;
   history?: { role: string; content: string }[];
   friendName?: string;
+	tools?: any[];
 };
 type base64File = {
   type: string;
@@ -63,6 +64,7 @@ const TIMEOUT_TIME = 1000 * 60 * 60 * 0.5; // aichatの返信を監視する時�
 const RANDOMTALK_DEFAULT_INTERVAL = 1000 * 60 * 60 * 12; // デフォルトのrandomTalk間隔
 
 const AUTO_NOTE_DEFAULT_INTERVAL = 1000 * 60 * 360;
+const AUTO_NOTE_DEFAULT_PROBABILITY = 0.02;
 
 export default class extends Module {
   public readonly name = 'aichat';
@@ -114,6 +116,12 @@ export default class extends Module {
 					: AUTO_NOTE_DEFAULT_INTERVAL;
 			setInterval(this.autoNote, interval);
 			this.log('Gemini自動ノート投稿を有効化: interval=' + interval);
+			const probability =
+				config.geminiAutoNoteProbability &&
+				!isNaN(parseFloat(config.geminiAutoNoteProbability))
+					? parseFloat(config.geminiAutoNoteProbability)
+					: AUTO_NOTE_DEFAULT_PROBABILITY;
+			this.log('Gemini自動ノート投稿確率: probability=' + probability);
 		}
 
     return {
@@ -139,7 +147,7 @@ export default class extends Module {
       aiChat.prompt +
       '。また、現在日時は' +
       now +
-      'であり、これは回答の参考にし、時刻を聞かれるまで時刻情報は提供しないこと(なお、他の日時は無効とすること)。';
+      'であり、これは回答の参考にし、絶対に時刻を聞かれるまで時刻情報は提供しないこと(なお、他の日時は無効とすること)。';
     if (aiChat.friendName != undefined) {
       systemInstructionText +=
         'なお、会話相手の名前は' + aiChat.friendName + 'とする。';
@@ -180,6 +188,7 @@ export default class extends Module {
       json: {
         contents: contents,
         systemInstruction: systemInstruction,
+				...(aiChat.tools && { tools: aiChat.tools }),
       },
     };
     this.log(JSON.stringify(options));
@@ -194,13 +203,13 @@ export default class extends Module {
           if (res_data.candidates[0].hasOwnProperty('content')) {
             if (res_data.candidates[0].content.hasOwnProperty('parts')) {
               if (res_data.candidates[0].content.parts.length > 0) {
-                if (
-                  res_data.candidates[0].content.parts[0].hasOwnProperty('text')
-                ) {
-                  const responseText =
-                    res_data.candidates[0].content.parts[0].text;
-                  return responseText;
+                let responseText = '';
+                for (const part of res_data.candidates[0].content.parts) {
+                  if (part.text) {
+                    responseText += part.text + '\n';
+                  }
                 }
+                return responseText.trim();
               }
             }
           }
@@ -427,14 +436,23 @@ export default class extends Module {
     return false;
   }
 
-	@bindThis
+  @bindThis
   private async autoNote() {
+    if (
+      config.geminiAutoNoteProbability !== undefined &&
+      !isNaN(Number.parseFloat(config.geminiAutoNoteProbability))
+    ) {
+      const probability = Number.parseFloat(config.geminiAutoNoteProbability);
+      if (Math.random() >= probability) {
+        this.log(`Gemini自動ノート投稿の確率によりスキップされました: probability=${probability}`);
+        return;
+      }
+    }
     this.log('Gemini自動ノート投稿開始');
     if (!config.geminiApiKey || !config.autoNotePrompt) {
       this.log('APIキーまたは自動ノート用プロンプトが設定されていません。');
       return;
     }
-    // 自動投稿の場合は質問部分は任意の固定文や空文字でもOKです。
     const aiChat: AiChat = {
       question: '',
       prompt: config.autoNotePrompt,
@@ -462,7 +480,13 @@ export default class extends Module {
     const extractedText = msg.extractedText;
     if (extractedText == undefined || extractedText.length == 0) return false;
 
-    const question = extractedText.replace(reName, '').trim();
+    let question = extractedText.replace(reName, '').trim();
+		let tools: any[] | undefined = undefined;
+
+		if (question.toLowerCase().startsWith('search ')) {
+			question = question.slice(7).trim();
+			tools = [{ google_search: {} }];
+		}
 
     const friend: Friend | null = this.ai.lookupFriend(msg.userId);
     let friendName: string | undefined;
@@ -487,6 +511,7 @@ export default class extends Module {
       key: config.geminiApiKey,
       history: exist.history,
       friendName: friendName,
+			tools: tools,
     };
 
     const base64Files: base64File[] = await this.note2base64File(msg.id);

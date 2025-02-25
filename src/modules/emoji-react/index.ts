@@ -25,6 +25,7 @@ export default class extends Module {
     if (note.reply != null) return;
     if (note.text == null) return;
     if (note.text.includes('@')) return; // (自分または他人問わず)メンションっぽかったらreject
+		if (note.userId === this.ai.account.id) return;
 
     const react = async (reaction: string, immediate = false) => {
       if (!immediate) {

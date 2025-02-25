@@ -11,6 +11,7 @@ services:
       - TZ=Asia/Tokyo
     volumes:
       - './config.json:/ai/config.json:ro'
+      - './serifs.yml:/ai/serifs.yml:ro'
       - './font.ttf:/ai/font.ttf:ro'
       - './data:/ai/data'
     restart: always

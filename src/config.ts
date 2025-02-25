@@ -18,6 +18,7 @@ type Config = {
   prompt?: string;
 	autoNotePrompt?: string;
 	autoNoteIntervalMinutes?: string;
+	geminiAutoNoteProbability?: string;
   aichatRandomTalkEnabled?: string;
   aichatRandomTalkProbability?: string;
   aichatRandomTalkIntervalMinutes?: string;

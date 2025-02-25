@@ -1,4 +1,5 @@
 config.json
+serifs.yml
 built
 node_modules
 memory.json

@@ -1,4 +1,5 @@
 config.json
+serifs.yml
 font.ttf
 ai.*
 *.md
